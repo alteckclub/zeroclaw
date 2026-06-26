@@ -1,13 +1,7 @@
-//! Nix flake renderer. The flake is the one packaged surface that rebuilds from
-//! source per-user, so it must expose feature selection (overridable), not a
-//! fixed set. We generate a sentinel-delimited zone defining the zeroclaw +
-//! zerocode packages with the canonical Dist feature list as the default
-//! `buildFeatures`, overridable via `.override { features = [...]; }`. The
-//! feature list and version come from the spec; nothing is typed.
-//!
-//! Git-dep NAR hashes (not derivable from Cargo.toml) live in nix/hashes.json
-//! and are loaded at Nix evaluation time via builtins.fromJSON. The generator
-//! only emits the structural reference — it never reads or embeds hash values.
+//! Nix flake renderer. The generated zone contains the canonical version
+//! (`zeroclawVersion`) and Dist feature list (`zeroclawDefaultFeatures`). The
+//! actual package build logic lives in `nix/package.nix` and is referenced via
+//! `pkgs.callPackage`.
 
 use super::spec::{self, Selection};
 use std::path::Path;
@@ -21,10 +15,8 @@ fn end(zone: &str) -> String {
 
 const ZONE: &str = "flake-packages";
 
-/// Render the generated package-definition zone body: a Rust package builder
-/// with the Dist feature list as default buildFeatures (overridable), exposing
-/// zeroclaw, zerocode, and default. Indented to sit inside the per-system `in {`
-/// block of the flake.
+/// Render the generated zone body: the canonical version and Dist feature list.
+/// Indented to sit inside the per-system `let` block of the flake.
 pub fn render_zone(root: &Path) -> anyhow::Result<String> {
     let version = spec::resolve_version(root)?;
     let dist = spec::resolve_feature_list(root, &Selection::Dist)?;
@@ -34,38 +26,13 @@ pub fn render_zone(root: &Path) -> anyhow::Result<String> {
         .collect::<Vec<_>>()
         .join(" ");
 
-    // Nix: a function over a feature list, defaulting to the canonical Dist set,
-    // building each binary with --no-default-features --features <list>. Users
-    // override with `.override { features = [ ... ]; }`.
     let lines = [
-        "        # Default feature set: canonical Dist (all channels, no heavyweight).".to_string(),
-        "        # Override with `packages.zeroclaw.override { features = [ ... ]; }`.".to_string(),
-        format!("        zeroclawDefaultFeatures = [ {feature_list} ];"),
-        "        buildZeroclaw = { pname, cargoPkg, features ? zeroclawDefaultFeatures }:"
-            .to_string(),
-        "          (pkgs.makeRustPlatform {".to_string(),
-        "            cargo = rustToolchain;".to_string(),
-        "            rustc = rustToolchain;".to_string(),
-        "          }).buildRustPackage {".to_string(),
-        "            inherit pname;".to_string(),
-        format!("            version = \"{version}\";"),
-        "            src = ./.;".to_string(),
-        "            cargoLock = {".to_string(),
-        "              lockFile = ./Cargo.lock;".to_string(),
-        "              outputHashes = builtins.fromJSON (builtins.readFile ./nix/hashes.json);"
-            .to_string(),
-        "            };".to_string(),
-        "            cargoBuildFlags =".to_string(),
-        "              [ \"-p\" cargoPkg \"--no-default-features\" ]".to_string(),
-        "              ++ pkgs.lib.optionals (features != [])".to_string(),
-        "                [ \"--features\" (pkgs.lib.concatStringsSep \",\" features) ];"
-            .to_string(),
-        "            doCheck = false;".to_string(),
-        "            buildInputs = [ pkgs.stdenv.cc.cc ];".to_string(),
-        "          };".to_string(),
+        "        # Default feature set: canonical Dist (all channels, no heavyweight).",
+        "        # Override with `packages.zeroclaw.override { features = [ ... ]; }`.",
+        &format!("        zeroclawVersion = \"{version}\";"),
+        &format!("        zeroclawDefaultFeatures = [ {feature_list} ];"),
     ];
-    let body = lines.join("\n");
-    Ok(body)
+    Ok(lines.join("\n"))
 }
 
 /// Splice the generated package zone into the flake, preserving hand-written
@@ -104,19 +71,21 @@ mod tests {
     }
 
     #[test]
-    fn zone_exposes_overridable_features() {
+    fn zone_exposes_default_features() {
         let z = render_zone(&root()).unwrap();
         assert!(
             z.contains("zeroclawDefaultFeatures"),
             "default feature list present"
         );
+    }
+
+    #[test]
+    fn zone_exposes_version() {
+        let v = spec::resolve_version(&root()).unwrap();
+        let z = render_zone(&root()).unwrap();
         assert!(
-            z.contains("features ?"),
-            "features parameter is overridable"
-        );
-        assert!(
-            z.contains("buildRustPackage"),
-            "real package build, not just toolchain"
+            z.contains(&format!("zeroclawVersion = \"{v}\"")),
+            "version present"
         );
     }
 
@@ -125,23 +94,5 @@ mod tests {
         let z = render_zone(&root()).unwrap();
         assert!(z.contains("\"channel-discord\""), "dist ships all channels");
         assert!(!z.contains("\"hardware\""), "dist excludes heavyweight");
-    }
-
-    #[test]
-    fn zone_version_from_workspace() {
-        let v = spec::resolve_version(&root()).unwrap();
-        let z = render_zone(&root()).unwrap();
-        assert!(z.contains(&format!("version = \"{v}\"")));
-    }
-
-    #[test]
-    fn zone_loads_hashes_via_nix_expression() {
-        let z = render_zone(&root()).unwrap();
-        assert!(
-            z.contains("builtins.fromJSON"),
-            "hashes loaded at eval time, not baked at generate time"
-        );
-        assert!(z.contains("outputHashes"), "outputHashes attribute present");
-        assert!(z.contains("buildInputs"), "buildInputs attribute present");
     }
 }
