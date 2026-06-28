@@ -31,7 +31,7 @@ rustPlatform.buildRustPackage {
   preBuild = pkgs.lib.optionalString
     (builtins.elem "embedded-web" features && webDist != null)
     ''
-      mkdir -p web
-      cp -r ${webDist} web/dist
+      mkdir -p web/dist
+      cp -r ${webDist}/. web/dist/
     '';
 }
