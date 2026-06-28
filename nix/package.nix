@@ -1,7 +1,7 @@
 # buildZeroclaw — callPackage-compatible function for ZeroClaw packages.
 # Passed through pkgs.callPackage in flake.nix to provide .override support.
 { pkgs, rustToolchain, zeroclawDefaultFeatures, zeroclawVersion, root, pname
-, cargoPkg, features ? zeroclawDefaultFeatures
+, cargoPkg, features ? zeroclawDefaultFeatures, webDist ? null
 }:
 
 let
@@ -27,4 +27,11 @@ rustPlatform.buildRustPackage {
     ++ pkgs.lib.optionals (builtins.elem "channel-voice-call" features) [ pkgs.autoPatchelfHook ];
   buildInputs = [ pkgs.stdenv.cc.cc ]
     ++ pkgs.lib.optionals (builtins.elem "channel-voice-call" features) [ pkgs.alsa-lib ];
+
+  preBuild = pkgs.lib.optionalString
+    (builtins.elem "embedded-web" features && webDist != null)
+    ''
+      mkdir -p web
+      cp -r ${webDist} web/dist
+    '';
 }
