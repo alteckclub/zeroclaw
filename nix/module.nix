@@ -230,6 +230,28 @@ let
             managed read-only assets.
           '';
         };
+
+        extraPath = mkOption {
+          type = types.listOf types.str;
+          default = [ ];
+          example = [ "/run/current-system/sw/bin" ];
+          description = ''
+            Extra directories to prepend to the unit's `PATH` environment
+            variable, after the default `/run/current-system/sw/bin` and
+            `/bin` entries. Useful when the agent spawns subprocesses that
+            need access to tools outside the Nix store closure — for
+            example, custom skill binaries or locally-installed packages.
+
+            The default PATH includes:
+
+              /run/current-system/sw/bin
+              /bin
+              (then each entry from this list)
+
+            Each directory is checked at `execve` time; missing entries
+            are harmless (systemd does not validate them at unit start).
+          '';
+        };
       };
     };
 
@@ -302,7 +324,10 @@ let
       unitConfig = optionalAttrs (instanceCfg.environmentFile != null) {
         ConditionPathExists = instanceCfg.environmentFile;
       };
-
+      path = [
+        "/run/current-system/sw"
+      ]
+      ++ instanceCfg.extraPath;
       environment = {
         ZEROCLAW_CONFIG_DIR = instanceCfg.dataDir;
         ZEROCLAW_WORKSPACE = "${instanceCfg.dataDir}/workspace";
